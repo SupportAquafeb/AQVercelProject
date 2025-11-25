@@ -1,3 +1,2 @@
-✅ JX2701-1.jpg → JX2705-1.jpg
-✅ JX2701-2.jpg → JX2705-2.jpg
-✅ JX2701-3.jpg → JX2705-3.jpg
+✅ HQ9269010-1.jpg → HQ9648010-1.jpg
+✅ HQ9269010-2.jpg → HQ9648010-2.jpg
