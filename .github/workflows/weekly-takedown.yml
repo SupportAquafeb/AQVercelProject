@@ -1,0 +1,68 @@
+# 商品圖圖床每週下架 —— change retire-vm-img-upload
+# 原始碼在 USDARS/devops-tools 的 scripts/image-upload/weekly-takedown.yml，部署到 SupportAquafeb/AQVercelProject 的
+# .github/workflows/weekly-takedown.yml，兩邊內容必須逐位元組相同（以 git blob SHA 驗收）。
+# 每週六 00:00（台北）把上傳超過 7 天的圖從網站下架，取代 VM-IMG-UPLOAD 的「圖片每週備份」排程。
+# 手動執行預設只列清單（dry_run=true）。公開 repo 60 天沒有任何活動，GitHub 會自動停用排程；重新啟用見 devops-tools docs/image-upload.md。
+name: Weekly takedown
+
+on:
+  schedule:
+    - cron: '0 16 * * 5'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只列出會下架的圖，不刪除'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  pages: write
+
+concurrency:
+  group: weekly-takedown
+  cancel-in-progress: false
+
+jobs:
+  takedown:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # 只抓 commit 與 tree（blob:none），工作目錄只放 .github：16 GB 的圖一張都不下載
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          sparse-checkout: .github
+
+      - name: Take down images uploaded more than 7 days ago
+        id: takedown
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          args=(--days 7)
+          if [ "$DRY_RUN" = true ]; then args+=(--dry-run); fi
+          bash .github/scripts/takedown.sh "${args[@]}"
+
+      # GITHUB_TOKEN 的推送不會觸發其他 workflow，所以明確要求 Pages 重建，等到這個 commit 建好為止
+      - name: Rebuild GitHub Pages and wait until built
+        if: steps.takedown.outputs.commit != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          COMMIT: ${{ steps.takedown.outputs.commit }}
+        run: |
+          gh api -X POST "repos/$REPO/pages/builds" --jq '.status'
+          for _ in $(seq 1 60); do
+            out=$(gh api "repos/$REPO/pages/builds/latest" --jq '.status + " " + .commit' 2>/dev/null) || out=''
+            status=${out%% *}
+            built=${out#* }
+            echo "pages build: status=$status commit=$built"
+            if [ "$built" = "$COMMIT" ] && [ "$status" = built ]; then exit 0; fi
+            if [ "$built" = "$COMMIT" ] && [ "$status" = errored ]; then echo "::error::Pages build errored for $COMMIT"; exit 1; fi
+            sleep 10
+          done
+          echo "::error::Pages build for $COMMIT did not reach built within 10 minutes"
+          exit 1
